@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   ArrowRight, Zap, ShieldCheck, Heart, Clock, Star, Truck, Check, Car, 
@@ -18,6 +18,17 @@ const HERO_IMAGES = [
   "https://images.unsplash.com/photo-1583121274602-3e2820c69888?auto=format&fit=crop&q=80&w=2000", // Ferrari
   "https://images.unsplash.com/photo-1494976388531-d1058494cdd8?auto=format&fit=crop&q=80&w=2000"  // Mustang
 ];
+
+const HeroSlide = memo(({ src, active }: { src: string, active: boolean }) => (
+  <div className="relative h-full w-full flex-shrink-0">
+    <img 
+      src={src} 
+      alt="Hero" 
+      loading={active ? "eager" : "lazy"}
+      className="w-full h-full object-cover will-change-transform" 
+    />
+  </div>
+));
 
 const HomePage: React.FC = () => {
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -38,7 +49,7 @@ const HomePage: React.FC = () => {
         }
         return next;
       });
-    }, 6000);
+    }, 8000); // Increased interval for better performance feel
     return () => clearInterval(slideInterval);
   }, [slideDirection]);
 
@@ -48,16 +59,14 @@ const HomePage: React.FC = () => {
       <section className="relative overflow-hidden text-white min-h-[95vh] flex items-center">
         <div className="absolute inset-0 z-0">
           <div 
-            className="flex h-full w-full transition-transform duration-[1200ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
+            className="flex h-full w-full transition-transform duration-[1200ms] ease-[cubic-bezier(0.4,0,0.2,1)] will-change-transform"
             style={{ 
               width: `${HERO_IMAGES.length * 100}%`,
               transform: `translateX(-${(currentSlide * 100) / HERO_IMAGES.length}%)` 
             }}
           >
             {HERO_IMAGES.map((src, index) => (
-              <div key={index} className="relative h-full w-full flex-shrink-0">
-                <img src={src} alt={`Slide ${index + 1}`} className="w-full h-full object-cover" />
-              </div>
+              <HeroSlide key={src} src={src} active={currentSlide === index} />
             ))}
           </div>
           <div className="absolute inset-0 bg-gradient-to-b from-[#2d1f2d]/95 via-[#2d1f2d]/80 to-[#faf8fa] z-10" />
@@ -112,7 +121,7 @@ const HomePage: React.FC = () => {
 
       {/* Trust Ticker */}
       <div className="bg-white border-b border-gray-100 py-6 overflow-hidden">
-        <div className="flex whitespace-nowrap animate-ticker">
+        <div className="flex whitespace-nowrap animate-ticker will-change-transform">
           {[1, 2, 3].map((i) => (
             <div key={i} className="flex items-center gap-12 px-6">
               <div className="flex items-center gap-3 text-[#2d1f2d]/40 font-black text-xs uppercase tracking-[0.2em]">
@@ -191,7 +200,6 @@ const HomePage: React.FC = () => {
 
       <FindOutMore />
 
-      {/* Global CTA Section */}
       <section className="py-32">
         <div className="max-w-7xl mx-auto px-4">
           <div className="bg-gradient-to-br from-[#e91e8c] to-[#ff4da6] rounded-[64px] p-12 md:p-24 text-white text-center relative overflow-hidden shadow-2xl shadow-pink-900/30">
@@ -208,7 +216,6 @@ const HomePage: React.FC = () => {
         </div>
       </section>
 
-      {/* Visible Administration Access Point */}
       <div className="py-16 flex justify-center border-t border-gray-100 bg-[#faf8fa]">
         <Link 
           to={user?.role === 'admin' ? "/customers" : "/auth"} 
@@ -222,10 +229,14 @@ const HomePage: React.FC = () => {
 
       <style>{`
         @keyframes ticker {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
+          0% { transform: translate3d(0, 0, 0); }
+          100% { transform: translate3d(-50%, 0, 0); }
         }
-        .animate-ticker { animation: ticker 40s linear infinite; }
+        .animate-ticker { 
+          animation: ticker 50s linear infinite; 
+          backface-visibility: hidden;
+          perspective: 1000px;
+        }
       `}</style>
     </div>
   );

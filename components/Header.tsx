@@ -8,7 +8,8 @@ import {
   Home, 
   ChevronDown, 
   Phone, 
-  User 
+  User,
+  Database
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -17,6 +18,8 @@ const Header: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  const isAdmin = user?.role === 'admin';
 
   const navLinks = [
     { label: 'Home', path: '/', icon: <Home size={18} className="mr-1" /> },
@@ -73,6 +76,17 @@ const Header: React.FC = () => {
                 {link.hasDropdown && <ChevronDown size={14} className="ml-1 opacity-70" />}
               </Link>
             ))}
+            {isAdmin && (
+              <Link
+                to="/admin/mid-status"
+                className={`flex items-center gap-2 text-[15px] font-bold px-4 py-1.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-all ${
+                  isActive('/admin/mid-status') ? 'border-[#e91e8c] text-[#e91e8c]' : 'text-[#e91e8c]'
+                }`}
+              >
+                <Database size={16} />
+                MID Ops
+              </Link>
+            )}
           </nav>
 
           {/* Right Action Section */}
@@ -124,6 +138,15 @@ const Header: React.FC = () => {
                 {link.label}
               </Link>
             ))}
+            {isAdmin && (
+              <Link
+                to="/admin/mid-status"
+                onClick={() => setIsOpen(false)}
+                className="flex items-center gap-3 text-lg font-bold text-[#e91e8c] bg-white/5 p-3 rounded-xl"
+              >
+                <Database size={20} /> MID Operations
+              </Link>
+            )}
             <div className="pt-4 border-t border-white/10 space-y-4">
               <Link 
                 to="/contact" 

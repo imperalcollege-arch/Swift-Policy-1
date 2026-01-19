@@ -10,6 +10,7 @@ import CookiePolicyPage from './pages/CookiePolicyPage';
 import QuotePage from './pages/QuotePage';
 import ContactPage from './pages/ContactPage';
 import CustomerCenterPage from './pages/CustomerCenterPage';
+import MIDStatusPage from './pages/MIDStatusPage';
 import AuthPage from './pages/AuthPage';
 import AboutPage from './pages/AboutPage';
 import CareersPage from './pages/CareersPage';
@@ -48,6 +49,7 @@ const App: React.FC = () => {
               <Route path="/faqs" element={<HelpPage />} />
               <Route path="/complaints" element={<ComplaintsPage />} />
               <Route path="/customers" element={<CustomerCenterPage />} />
+              <Route path="/admin/mid-status" element={<MIDStatusPage />} />
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/login" element={<AuthPage />} />
               <Route path="/signup" element={<AuthPage />} />

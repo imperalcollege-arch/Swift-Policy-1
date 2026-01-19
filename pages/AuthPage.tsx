@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { Shield, ArrowRight, Mail, Lock, User, AlertCircle, CheckCircle2, KeyRound, Loader2 } from 'lucide-react';
+import { Shield, ArrowRight, Mail, Lock, User, AlertCircle, CheckCircle2, KeyRound, Loader2, Eye, EyeOff } from 'lucide-react';
 
 interface AuthErrors {
   [key: string]: string;
@@ -21,6 +21,7 @@ const AuthPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const { user, login, signup, requestPasswordReset, resetPasswordWithToken } = useAuth();
   const navigate = useNavigate();
@@ -71,7 +72,7 @@ const AuthPage: React.FC = () => {
           setSuccess('Enrollment successful. Redirecting to portal...');
           setTimeout(() => navigate('/customers'), 1500);
         } else {
-          setError('Email domain already registered.');
+          setError('Email domain already registered or reserved.');
         }
       } else if (view === 'forgot') {
         const found = await requestPasswordReset(email);
@@ -101,13 +102,16 @@ const AuthPage: React.FC = () => {
 
   const renderField = (label: string, field: string, value: string, setValue: (val: string) => void, placeholder: string, type: string = 'text', Icon: any) => {
     const isInvalid = !!formErrors[field];
+    const isPassword = type === 'password';
+    const inputType = isPassword ? (showPassword ? 'text' : 'password') : type;
+
     return (
       <div className="space-y-2">
         <label className="text-xs font-black uppercase tracking-widest text-[#2d1f2d]/30 ml-1">{label}</label>
         <div className="relative">
           <Icon className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isInvalid ? 'text-red-400' : 'text-[#e91e8c]/30'}`} size={18} />
           <input
-            type={type}
+            type={inputType}
             required
             value={value}
             onChange={(e) => {
@@ -118,11 +122,21 @@ const AuthPage: React.FC = () => {
                 setFormErrors(newErrors);
               }
             }}
-            className={`w-full border rounded-2xl pl-12 pr-6 py-4 text-base focus:outline-none transition-all ${
+            className={`w-full border rounded-2xl pl-12 pr-${isPassword ? '12' : '6'} py-4 text-base focus:outline-none transition-all ${
               isInvalid ? 'bg-red-50 border-red-200 focus:border-red-400' : 'bg-gray-50 border-gray-100 focus:border-[#e91e8c]'
             }`}
             placeholder={placeholder}
           />
+          {isPassword && (
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-[#e91e8c] transition-colors"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          )}
         </div>
         {isInvalid && <p className="text-[10px] font-bold text-red-500 mt-1 flex items-center gap-1 ml-1"><AlertCircle size={10} /> {formErrors[field]}</p>}
       </div>

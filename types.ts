@@ -9,7 +9,26 @@ export enum InsuranceType {
 }
 
 export type InquiryType = 'General' | 'Quote' | 'Payment' | 'Claim' | 'Technical' | 'Feedback';
-export type UserStatus = 'Active' | 'Blocked' | 'Suspended';
+export type UserStatus = 'Active' | 'Blocked' | 'Suspended' | 'Frozen' | 'Deleted' | 'Locked';
+export type PolicyStatus = 'Active' | 'Frozen' | 'Cancelled' | 'Terminated' | 'Expired' | 'Renewed';
+export type RiskLevel = 'Low' | 'Medium' | 'High';
+export type ClaimStatus = 'Under Review' | 'Approved' | 'Rejected' | 'Docs Requested';
+export type KYCStatus = 'VERIFIED' | 'PENDING' | 'FAILED' | 'NONE';
+export type ComplianceStatus = 'GOOD' | 'REVIEW_REQUIRED' | 'FLAGGED';
+export type MIDStatus = 'Pending' | 'Success' | 'Failed' | 'Retrying';
+
+export type EnforcedInsuranceType = 'Comprehensive Cover' | 'Third Party Insurance' | 'Motorcycle Insurance';
+
+export interface MIDSubmission {
+  id: string;
+  policyId: string;
+  vrm: string;
+  status: MIDStatus;
+  submittedAt: string;
+  lastAttemptAt?: string;
+  responseData?: string;
+  retryCount: number;
+}
 
 export interface ContactMessage {
   id: string;
@@ -34,27 +53,51 @@ export interface User {
   createdAt: string;
   lastLogin?: string;
   lastIp?: string;
-  failedLoginAttempts?: number;
-  isLocked?: boolean;
+  riskLevel?: RiskLevel;
+  risk_flag?: boolean;
+  isSuspicious?: boolean;
+  internalNotes?: string;
+  billing_blocked?: boolean;
+  kyc_status?: KYCStatus;
+  compliance_status?: ComplianceStatus;
 }
 
 export interface AuditLog {
   id: string;
   timestamp: string;
-  userId: string; // The person who performed the action
+  userId: string; 
   userEmail: string;
-  targetUserId?: string; // The person the action was performed on
+  targetId?: string; 
   action: string;
   details: string;
   ipAddress: string;
+  reason?: string;
 }
 
-export interface DownloadRecord {
+export interface Policy {
   id: string;
-  timestamp: string;
   userId: string;
+  type: string;
+  premium: string;
+  status: PolicyStatus;
+  details: any;
+  riskFlag?: boolean;
+  notes?: string;
+  midStatus?: MIDStatus;
+  pdfUrl?: string; // New field for PDF storage
+}
+
+export interface Claim {
+  id: string;
   policyId: string;
-  fileName: string;
+  userId: string;
+  date: string;
+  type: string;
+  description: string;
+  status: ClaimStatus;
+  internalNotes?: string;
+  timestamp: string;
+  fraud_flag?: boolean;
 }
 
 export interface PaymentRecord {
@@ -65,17 +108,11 @@ export interface PaymentRecord {
   description: string;
   amount: string;
   type: 'Full Payment' | 'Monthly Installment';
-  status: 'Paid in Full' | 'Payment Successful' | 'Pending' | 'Direct Republic Set Up';
+  status: 'Paid in Full' | 'Payment Successful' | 'Pending' | 'Direct Republic Set Up' | 'Disputed' | 'Refunded' | 'Overdue';
   method: string;
   reference: string;
   bankTransactionId?: string;
-  planDetails?: {
-    totalPremium: string;
-    installmentsRemaining: number;
-    nextPaymentDate: string;
-    apr: string;
-    schedule: Array<{ date: string; amount: string; status: string }>;
-  };
+  dispute?: boolean;
   policyDetails: {
     vrm: string;
     make: string;
@@ -88,6 +125,7 @@ export interface PaymentRecord {
 
 export interface QuoteData {
   vrm: string;
+  insurance_type: EnforcedInsuranceType | '';
   make: string;
   model: string;
   year: string;
@@ -153,4 +191,5 @@ export interface QuoteData {
   dataProcessingConsent: boolean;
   isAccurate: boolean;
   termsAccepted: boolean;
+  generated_quote?: number;
 }
