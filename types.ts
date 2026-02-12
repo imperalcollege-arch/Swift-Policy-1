@@ -9,7 +9,7 @@ export enum InsuranceType {
 }
 
 export type InquiryType = 'General' | 'Quote' | 'Payment' | 'Claim' | 'Technical' | 'Feedback';
-export type UserStatus = 'Active' | 'Blocked' | 'Suspended' | 'Frozen' | 'Deleted' | 'Locked';
+export type UserStatus = 'Active' | 'Blocked' | 'Suspended' | 'Frozen' | 'Deleted' | 'Locked' | 'Removed';
 export type PolicyStatus = 'Active' | 'Frozen' | 'Cancelled' | 'Terminated' | 'Expired' | 'Renewed';
 export type RiskLevel = 'Low' | 'Medium' | 'High';
 export type ClaimStatus = 'Under Review' | 'Approved' | 'Rejected' | 'Docs Requested';
@@ -84,7 +84,7 @@ export interface Policy {
   riskFlag?: boolean;
   notes?: string;
   midStatus?: MIDStatus;
-  pdfUrl?: string; // New field for PDF storage
+  pdfUrl?: string;
 }
 
 export interface Claim {

@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { User, AuditLog, UserStatus, PolicyStatus, Policy, PaymentRecord, ContactMessage, RiskLevel, Claim, ClaimStatus, KYCStatus, ComplianceStatus, MIDSubmission, MIDStatus } from '../types';
+import { User, AuditLog, UserStatus, PolicyStatus, Policy, PaymentRecord, ContactMessage, InquiryType, RiskLevel, Claim, ClaimStatus, KYCStatus, ComplianceStatus, MIDSubmission, MIDStatus } from '../types';
 
 interface AuthContextType {
   user: User | null;
@@ -30,8 +30,9 @@ interface AuthContextType {
   // EXECUTABLE POLICY ACTIONS
   updatePolicyStatus: (id: string, status: PolicyStatus, reason: string) => void;
   updatePolicyDetails: (id: string, updates: Partial<Policy>, reason: string) => void;
-  generatePolicyPDF: (policyId: string) => Promise<void>; // Additive method
-  downloadPDF: (policyId: string) => void; // Additive method
+  generatePolicyPDF: (policyId: string) => Promise<string | null>;
+  downloadPDF: (policyId: string) => void;
+  deletePolicy: (id: string, reason: string) => void;
   
   // EXECUTABLE PAYMENT ACTIONS
   updatePaymentStatus: (id: string, status: PaymentRecord['status'], reason: string) => void;
@@ -44,6 +45,7 @@ interface AuthContextType {
   // MID INTEGRATION ACTIONS
   queueMIDSubmission: (policyId: string, vrm: string) => void;
   retryMIDSubmission: (submissionId: string) => Promise<boolean>;
+  checkAskMID: (vrm: string) => Promise<{ found: boolean; status?: string; message: string }>;
   
   // Support & Inquiries
   submitInquiry: (data: Partial<ContactMessage>) => Promise<boolean>;
@@ -60,7 +62,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Collection States (for performance)
   const [users, setUsers] = useState<User[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
@@ -71,8 +72,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isProcessingRef = useRef(false);
 
-  // Data Loading and Sync
+  const seedInitialData = useCallback(() => {
+    if (localStorage.getItem('sp_users')) return;
+
+    const initialUsers = [{ 
+      id: 'ADMIN-MASTER', name: 'System Admin', email: 'admin@swiftpolicy.co.uk', 
+      role: 'admin', status: 'Active', createdAt: new Date().toISOString(), password: 'AdminPassword123!' 
+    }];
+    
+    const initialLogs = [{
+      id: 'LOG-INIT', timestamp: new Date().toISOString(), userId: 'SYSTEM', userEmail: 'System',
+      action: 'SYSTEM_BOOT', details: 'SwiftPolicy Environment Initialized Successfully', ipAddress: '127.0.0.1'
+    }];
+
+    localStorage.setItem('sp_users', JSON.stringify(initialUsers));
+    localStorage.setItem('sp_audit_logs', JSON.stringify(initialLogs));
+    localStorage.setItem('sp_client_data', '[]');
+    localStorage.setItem('sp_payment_data', '[]');
+    localStorage.setItem('sp_claims', '[]');
+    localStorage.setItem('sp_contact_messages', '[]');
+    localStorage.setItem('sp_mid_submissions', '[]');
+  }, []);
+
   const loadData = useCallback(() => {
+    seedInitialData();
     setUsers(JSON.parse(localStorage.getItem('sp_users') || '[]'));
     setPolicies(JSON.parse(localStorage.getItem('sp_client_data') || '[]'));
     setPayments(JSON.parse(localStorage.getItem('sp_payment_data') || '[]'));
@@ -80,7 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuditLogs(JSON.parse(localStorage.getItem('sp_audit_logs') || '[]'));
     setInquiries(JSON.parse(localStorage.getItem('sp_contact_messages') || '[]'));
     setMidSubmissions(JSON.parse(localStorage.getItem('sp_mid_submissions') || '[]'));
-  }, []);
+  }, [seedInitialData]);
 
   useEffect(() => {
     loadData();
@@ -89,14 +112,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const u = JSON.parse(savedUser);
       const allUsers = JSON.parse(localStorage.getItem('sp_users') || '[]');
       const current = allUsers.find((existing: any) => existing.id === u.id);
-      if (current && ['Blocked', 'Deleted', 'Locked'].includes(current.status)) {
-        logout();
+      if (current && ['Blocked', 'Deleted', 'Locked', 'Removed'].includes(current.status)) {
+        setUser(null);
+        localStorage.removeItem('sp_session');
       } else if (current) {
-        setUser(current);
+        const { password, ...safeUser } = current;
+        setUser(safeUser);
       } else if (u.id === 'ADMIN-MASTER') {
         setUser(u);
-      } else {
-        logout();
       }
     }
     setIsLoading(false);
@@ -118,16 +141,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuditLogs(updated);
   }, [user]);
 
-  // NEW: PDF Generation Helper (Isolated Logic)
-  const generatePolicyPDF = useCallback(async (policyId: string) => {
+  const generatePolicyPDF = useCallback(async (policyId: string): Promise<string | null> => {
     const allPolicies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
     const policyIdx = allPolicies.findIndex((p: any) => p.id === policyId);
-    if (policyIdx === -1) return;
+    if (policyIdx === -1) return null;
 
     const policy = allPolicies[policyIdx];
     const targetUser = JSON.parse(localStorage.getItem('sp_users') || '[]').find((u: any) => u.id === policy.userId);
     
-    // Simulate server-side generation
     await new Promise(r => setTimeout(r, 1200));
 
     const pdfContent = `
@@ -157,21 +178,24 @@ Regulatory: FCA FRN 481413
 THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     `.trim();
 
-    // Store as data URL/Blob (Simulated server storage)
-    const blob = new Blob([pdfContent], { type: 'application/pdf' });
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64data = reader.result as string;
-      allPolicies[policyIdx].pdfUrl = base64data;
-      localStorage.setItem('sp_client_data', JSON.stringify(allPolicies));
-      setPolicies(allPolicies);
-      addAuditLog('POLICY_PDF_GENERATED', `Certificate issued for ${policyId}`, policyId);
-    };
-    reader.readAsDataURL(blob);
+    return new Promise((resolve) => {
+      const blob = new Blob([pdfContent], { type: 'text/plain' });
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64data = reader.result as string;
+        allPolicies[policyIdx].pdfUrl = base64data;
+        localStorage.setItem('sp_client_data', JSON.stringify(allPolicies));
+        setPolicies(allPolicies);
+        addAuditLog('POLICY_PDF_GENERATED', `Certificate issued for ${policyId}`, policyId);
+        resolve(base64data);
+      };
+      reader.readAsDataURL(blob);
+    });
   }, [addAuditLog]);
 
   const downloadPDF = useCallback((policyId: string) => {
-    const policy = policies.find(p => p.id === policyId);
+    const allPolicies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
+    const policy = allPolicies.find((p: any) => p.id === policyId);
     if (!policy || !policy.pdfUrl) return;
 
     const link = document.createElement('a');
@@ -180,22 +204,18 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  }, [policies]);
+  }, []);
 
-  // MID Middleware
   const performMIDUpload = useCallback(async (submission: MIDSubmission) => {
-    await new Promise(r => setTimeout(r, 1500)); // Optimized latency for better feel
-    
+    await new Promise(r => setTimeout(r, 2000));
     const currentSubs = JSON.parse(localStorage.getItem('sp_mid_submissions') || '[]');
     const idx = currentSubs.findIndex((s: any) => s.id === submission.id);
     if (idx === -1) return;
 
-    const isSuccess = Math.random() > 0.15;
-    
+    const isSuccess = Math.random() > 0.1;
     if (isSuccess) {
       currentSubs[idx].status = 'Success';
-      currentSubs[idx].responseData = `<MIBResponse><TransactionID>TRX-${Math.random().toString(36).toUpperCase()}</TransactionID><Status>ACCEPTED</Status></MIBResponse>`;
-      
+      currentSubs[idx].responseData = `HTTP/1.1 200 OK\nMIB-TXN-ID: ${Math.random().toString(36).toUpperCase()}\nStatus: ACCEPTED`;
       const currentPolicies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
       const pIdx = currentPolicies.findIndex((p: any) => p.id === submission.policyId);
       if (pIdx !== -1) {
@@ -203,14 +223,13 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
         localStorage.setItem('sp_client_data', JSON.stringify(currentPolicies));
         setPolicies(currentPolicies);
       }
-      addAuditLog('MID_TX_SUCCESS', `Asset ${submission.vrm} synced`, submission.id);
+      addAuditLog('MID_TX_SUCCESS', `Asset ${submission.vrm} synced to national database`, submission.id);
     } else {
       currentSubs[idx].status = 'Failed';
       currentSubs[idx].retryCount += 1;
-      currentSubs[idx].responseData = 'ERR_MIB_GATEWAY_TIMEOUT';
+      currentSubs[idx].responseData = 'HTTP/1.1 503 SERVICE UNAVAILABLE\nGateway Timeout';
       addAuditLog('MID_TX_FAILURE', `Submission failure for ${submission.vrm}`, submission.id);
     }
-    
     currentSubs[idx].lastAttemptAt = new Date().toISOString();
     localStorage.setItem('sp_mid_submissions', JSON.stringify(currentSubs));
     setMidSubmissions(currentSubs);
@@ -231,12 +250,14 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
   }, [performMIDUpload]);
 
   useEffect(() => {
-    const interval = setInterval(processMIDQueue, 30000);
+    const interval = setInterval(processMIDQueue, 10000);
     return () => clearInterval(interval);
   }, [processMIDQueue]);
 
   const queueMIDSubmission = useCallback((policyId: string, vrm: string) => {
     const subs = JSON.parse(localStorage.getItem('sp_mid_submissions') || '[]');
+    if (subs.find((s: any) => s.policyId === policyId)) return;
+
     const newSub: MIDSubmission = {
       id: `MID-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
       policyId, vrm, status: 'Pending',
@@ -246,9 +267,38 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     const updated = [newSub, ...subs];
     localStorage.setItem('sp_mid_submissions', JSON.stringify(updated));
     setMidSubmissions(updated);
-    addAuditLog('MID_EVENT_RECEIVED', `Policy ${policyId} intercepted`, newSub.id);
+    addAuditLog('MID_EVENT_RECEIVED', `Policy ${policyId} intercepted for registry update`, newSub.id);
     setTimeout(processMIDQueue, 1000);
   }, [addAuditLog, processMIDQueue]);
+
+  useEffect(() => {
+    const activePolicies = policies.filter(p => p.status === 'Active');
+    const existingMIDPolicyIds = new Set(midSubmissions.map(s => s.policyId));
+    
+    activePolicies.forEach(p => {
+      if (!existingMIDPolicyIds.has(p.id)) {
+        queueMIDSubmission(p.id, p.details?.vrm || 'UNKNOWN');
+      }
+    });
+  }, [policies, midSubmissions, queueMIDSubmission]);
+
+  const checkAskMID = async (vrm: string) => {
+    await new Promise(r => setTimeout(r, 1500));
+    const normalized = vrm.replace(/\s/g, '').toUpperCase();
+    const submission = midSubmissions.find(s => s.vrm.replace(/\s/g, '').toUpperCase() === normalized && s.status === 'Success');
+    
+    if (submission) {
+      return { 
+        found: true, 
+        status: 'INSURED', 
+        message: `Asset ${vrm} is listed on the Motor Insurance Database as of ${new Date().toLocaleDateString()}.` 
+      };
+    }
+    return { 
+      found: false, 
+      message: `No active insurance record found for ${vrm} in the national database.` 
+    };
+  };
 
   const retryMIDSubmission = async (submissionId: string) => {
     const subs = JSON.parse(localStorage.getItem('sp_mid_submissions') || '[]');
@@ -264,34 +314,26 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
   };
 
   const login = async (email: string, pass: string) => {
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 600));
     const allUsers = JSON.parse(localStorage.getItem('sp_users') || '[]');
     const normalizedEmail = email.toLowerCase();
     
-    if (normalizedEmail === 'admin@swiftpolicy.co.uk' && pass === 'AdminPassword123!') {
-      const admin: User = { id: 'ADMIN-MASTER', name: 'System Admin', email: normalizedEmail, role: 'admin', status: 'Active', createdAt: '2025-01-01T00:00:00Z' };
-      setUser(admin);
-      localStorage.setItem('sp_session', JSON.stringify(admin));
-      return { success: true, message: 'Admin verified.' };
-    }
-
     const foundIdx = allUsers.findIndex((u: any) => u.email.toLowerCase() === normalizedEmail);
     if (foundIdx === -1) return { success: false, message: 'Identity not found.' };
 
     const found = allUsers[foundIdx];
-    if (['Blocked', 'Deleted', 'Locked'].includes(found.status)) {
-      return { success: false, message: `Access Blocked: ${found.status}.` };
+    if (['Blocked', 'Deleted', 'Locked', 'Frozen', 'Removed'].includes(found.status)) {
+      return { success: false, message: `Access Restricted: ${found.status}.` };
     }
 
     if (found.password === pass) {
-      const sessionUser = { ...found };
-      delete sessionUser.password;
+      const { password, ...sessionUser } = found;
       allUsers[foundIdx].lastLogin = new Date().toISOString();
       localStorage.setItem('sp_users', JSON.stringify(allUsers));
       setUsers(allUsers);
       setUser(sessionUser);
       localStorage.setItem('sp_session', JSON.stringify(sessionUser));
-      return { success: true, message: 'Welcome back.' };
+      return { success: true, message: 'Verified.' };
     }
     return { success: false, message: 'Invalid credentials.' };
   };
@@ -307,8 +349,7 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     const updated = [...allUsers, newUser];
     localStorage.setItem('sp_users', JSON.stringify(updated));
     setUsers(updated);
-    const sessionUser = { ...newUser };
-    delete sessionUser.password;
+    const { password, ...sessionUser } = newUser;
     setUser(sessionUser);
     localStorage.setItem('sp_session', JSON.stringify(sessionUser));
     return true;
@@ -408,13 +449,10 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     const allUsers = JSON.parse(localStorage.getItem('sp_users') || '[]');
     const idx = allUsers.findIndex((u: any) => u.id === id);
     if (idx !== -1) {
-      allUsers[idx].status = 'Deleted';
-      allUsers[idx].name = 'REDACTED_CLIENT';
-      allUsers[idx].email = `purged_${id}@swiftpolicy.uk`;
-      allUsers[idx].password = 'PURGED';
+      allUsers.splice(idx, 1);
       localStorage.setItem('sp_users', JSON.stringify(allUsers));
       setUsers(allUsers);
-      addAuditLog('ACCOUNT_PURGE', `PII anonymized.`, id, reason);
+      addAuditLog('ACCOUNT_PURGE', `Hard deleted user account.`, id, reason);
     }
   };
 
@@ -429,6 +467,17 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
     }
   };
 
+  const deletePolicy = (id: string, reason: string) => {
+    const allPolicies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
+    const idx = allPolicies.findIndex((p: any) => p.id === id);
+    if (idx !== -1) {
+      allPolicies.splice(idx, 1);
+      localStorage.setItem('sp_client_data', JSON.stringify(allPolicies));
+      setPolicies(allPolicies);
+      addAuditLog('POLICY_PURGE', `Hard deleted policy record.`, id, reason);
+    }
+  };
+
   const updatePolicyDetails = (id: string, updates: Partial<Policy>, reason: string) => {
     const allPolicies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
     const idx = allPolicies.findIndex((p: any) => p.id === id);
@@ -436,7 +485,7 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
       allPolicies[idx] = { ...allPolicies[idx], ...updates };
       localStorage.setItem('sp_client_data', JSON.stringify(allPolicies));
       setPolicies(allPolicies);
-      addAuditLog('POLICY_METADATA_UPDATE', `Modified metadata.`, id, reason);
+      addAuditLog('POLICY_METADATA_UPDATE', `Metadata updated.`, id, reason);
     }
   };
 
@@ -447,7 +496,7 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
       allPayments[idx].status = status;
       localStorage.setItem('sp_payment_data', JSON.stringify(allPayments));
       setPayments(allPayments);
-      addAuditLog('PAYMENT_STATUS_CHANGE', `Set to ${status}`, id, reason);
+      addAuditLog('PAYMENT_STATUS_CHANGE', `Status: ${status}`, id, reason);
     }
   };
 
@@ -463,7 +512,7 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
   };
 
   const submitClaim = async (policyId: string, type: string, description: string) => {
-    if (!user || user.status === 'Frozen') return false;
+    if (!user || user.status === 'Frozen' || user.status === 'Blocked' || user.status === 'Removed') return false;
     const allClaims = JSON.parse(localStorage.getItem('sp_claims') || '[]');
     const newClaim: Claim = {
       id: `CLM-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
@@ -491,11 +540,13 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
   };
 
   const submitInquiry = async (data: Partial<ContactMessage>) => {
+    await new Promise(r => setTimeout(r, 1200));
     const current = JSON.parse(localStorage.getItem('sp_contact_messages') || '[]');
-    const newMessage = { id: Math.random().toString(36).substr(2, 9), ...data, status: 'Unread', timestamp: new Date().toISOString() } as ContactMessage;
+    const newMessage = { id: `MSG-${Math.random().toString(36).substr(2, 6).toUpperCase()}`, ...data, status: 'Unread', timestamp: new Date().toISOString() } as ContactMessage;
     const updated = [newMessage, ...current];
     localStorage.setItem('sp_contact_messages', JSON.stringify(updated));
     setInquiries(updated);
+    addAuditLog('EMAIL_DISPATCHED', `Support inquiry routed to info@swiftpolicy.co.uk`, newMessage.id);
     return true;
   };
 
@@ -525,8 +576,8 @@ THIS DOCUMENT IS A LEGALLY BINDING CERTIFICATE OF INSURANCE.
       updateUserStatus, updateUserRisk, setComplianceStatus, deleteUserPermanent, setKYCStatus, blockPayments,
       updatePolicyStatus, updatePolicyDetails, updatePaymentStatus, markPaymentDispute, updateClaimStatus, submitClaim,
       submitInquiry, markInquiryAsRead, deleteInquiry,
-      queueMIDSubmission, retryMIDSubmission, refreshData: loadData,
-      generatePolicyPDF, downloadPDF // Exported additive methods
+      queueMIDSubmission, retryMIDSubmission, checkAskMID, refreshData: loadData,
+      generatePolicyPDF, downloadPDF, deletePolicy
     }}>
       {children}
     </AuthContext.Provider>

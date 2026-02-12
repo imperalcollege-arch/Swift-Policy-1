@@ -4,7 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { 
   Car, ShieldCheck, ArrowRight, Loader2,
-  AlertCircle, Bike, Search, ChevronDown, Lock, CheckCircle
+  AlertCircle, Bike, Search, ChevronDown, Lock, CheckCircle, Database, AlertOctagon,
+  Globe, ExternalLink
 } from 'lucide-react';
 import { QuoteData, PaymentRecord, EnforcedInsuranceType } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
@@ -39,24 +40,28 @@ const QuotePage: React.FC = () => {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [finalQuote, setFinalQuote] = useState<number | null>(null);
+  const [groundingSources, setGroundingSources] = useState<{title: string, uri: string}[]>([]);
 
-  // OPERATIONAL AUTHORIZATION CHECK
-  if (user && (user.status === 'Frozen' || user.status === 'Blocked')) {
+  const validateVRM = (vrm: string) => {
+    const normalized = vrm.replace(/\s/g, '').toUpperCase();
+    return /^[A-Z]{2}[0-9]{2}[A-Z]{3}$|^[A-Z][0-9]{1,3}[A-Z]{3}$|^[A-Z]{3}[0-9]{1,3}[A-Z]$|^[0-9]{1,4}[A-Z]{1,2}$|^[0-9]{1,3}[A-Z]{1,3}$|^[A-Z]{1,2}[0-9]{1,4}$|^[A-Z]{1,3}[0-9]{1,3}$/.test(normalized);
+  };
+
+  if (user && ['Frozen', 'Blocked', 'Removed', 'Deleted'].includes(user.status)) {
     return (
       <div className="min-h-screen bg-[#faf8fa] flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-white rounded-[64px] p-16 text-center shadow-2xl border border-gray-100 animate-in zoom-in-95">
            <div className="w-24 h-24 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-10">
               <Lock size={48} />
            </div>
-           <h2 className="text-3xl font-bold text-[#2d1f2d] font-outfit mb-6">Operational Block</h2>
-           <p className="text-gray-500 mb-10 leading-relaxed font-medium">Policy acquisition is restricted for accounts currently under administrative review.</p>
+           <h2 className="text-3xl font-bold text-[#2d1f2d] font-outfit mb-6">Service Restriction</h2>
+           <p className="text-gray-500 mb-10 leading-relaxed font-medium">Policy acquisition is restricted for your account status: <span className="text-red-600 font-black">{user.status}</span>. Please contact administrative support.</p>
            <button onClick={() => navigate('/customers')} className="w-full py-5 bg-[#2d1f2d] text-white rounded-2xl font-black uppercase tracking-widest text-xs">Return to Dashboard</button>
         </div>
       </div>
     );
   }
 
-  // ATOMIC QUOTE LOGIC - SERVER-SIDE SIMULATION
   const executeBindingQuoteGeneration = (type: EnforcedInsuranceType): number => {
     let quote = 0;
     const randomSeed = Math.random();
@@ -82,41 +87,70 @@ const QuotePage: React.FC = () => {
   };
 
   const handleLookup = async () => {
-    if (!formData.vrm) return;
+    const vrmInput = formData.vrm.replace(/\s/g, '').toUpperCase();
+    if (!vrmInput) return;
+    
+    if (!validateVRM(vrmInput)) {
+      setLookupError("Invalid UK registration format. Check VRM.");
+      return;
+    }
+
     setIsLookingUp(true);
     setLookupError(null);
     setLookupSuccess(false);
+    setGroundingSources([]);
 
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const searchResponse = await ai.models.generateContent({
+      const systemInstruction = `
+        You are a self-contained vehicle lookup module for a UK motor insurance website.
+        Search for real-time UK DVLA data for the provided registration.
+        Return ONLY valid JSON with exactly these fields: 
+        registration_number, vehicle_category, make, model, body_type, fuel_type, 
+        engine_capacity_cc, year_of_manufacture, colour, transmission, mot_status, 
+        mot_expiry_date, tax_status, dvla_data_confirmed.
+        If any data is unknown, use null.
+        Return ONLY valid JSON. No conversational text.
+      `.trim();
+
+      const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Vehicle specs for UK reg: ${formData.vrm}. JSON: make, model, year, fuelType, bodyType, engineSize, seats.`,
+        contents: `Fetch official DVLA specifications for registration: ${vrmInput}`,
         config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              make: { type: Type.STRING },
-              model: { type: Type.STRING },
-              year: { type: Type.STRING },
-              error: { type: Type.STRING }
-            }
-          }
+          systemInstruction,
+          tools: [{googleSearch: {}}],
         }
       });
 
-      const data = JSON.parse(searchResponse.text);
-      if (data.error) {
-        setLookupError("Registration not found. Verify VRM.");
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      const sources = chunks
+        .filter(c => c.web)
+        .map(c => ({ title: c.web.title || 'Official Record', uri: c.web.uri }));
+      setGroundingSources(sources);
+
+      const rawText = response.text.replace(/```json/g, '').replace(/```/g, '').trim();
+      const data = JSON.parse(rawText);
+
+      if (data.error || !data.make) {
+        setLookupError(data.error || "Vehicle not found in official UK records.");
         setIsLookingUp(false);
         return;
       }
 
-      setFormData(prev => ({ ...prev, make: data.make || 'MANUAL', model: data.model || 'MANUAL', year: data.year || '2024' }));
+      setFormData(prev => ({ 
+        ...prev, 
+        make: data.make, 
+        model: data.model, 
+        year: data.year_of_manufacture,
+        fuelType: data.fuel_type,
+        bodyType: data.body_type,
+        engineSize: data.engine_capacity_cc,
+        vrm: data.registration_number || vrmInput,
+        transmission: data.transmission
+      }));
       setLookupSuccess(true);
     } catch (err) {
-      setLookupError("Registry link down. Proceed manually.");
+      setLookupError("National registry connection interrupted. Please try manual entry.");
     } finally {
       setIsLookingUp(false);
     }
@@ -133,7 +167,6 @@ const QuotePage: React.FC = () => {
         setIsProcessing(false);
         setStep(9);
       } catch (err) {
-        alert("CRITICAL SYSTEM ERROR: PRICING GATEWAY FAILURE");
         setIsProcessing(false);
       }
     }, 1500);
@@ -159,27 +192,22 @@ const QuotePage: React.FC = () => {
       details: { ...formData, premium: finalQuote }
     };
 
-    const payment: PaymentRecord = {
+    const p = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
+    p.push(policy);
+    localStorage.setItem('sp_client_data', JSON.stringify(p));
+
+    const pay = JSON.parse(localStorage.getItem('sp_payment_data') || '[]');
+    pay.push({
       id: `PAY-${Math.random().toString(36).substr(2, 8).toUpperCase()}`,
       policyId, userId: currentUser!.id, date: new Date().toISOString(),
       description: `PREMIUM SETTLEMENT - ${policyId}`,
       amount: `£${finalQuote}.00`, type: 'Full Payment', status: 'Paid in Full',
       method: 'Visa Debit •••• 4242', reference: `SWIFT-${Math.random().toString(36).substr(2, 10).toUpperCase()}`,
       policyDetails: { vrm: formData.vrm, make: formData.make, model: formData.model, coverLevel: formData.insurance_type!, insurer: 'SwiftPolicy Services', renewalDate: new Date(new Date().getFullYear() + 1, new Date().getMonth(), new Date().getDate()).toISOString() }
-    };
-
-    const p = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
-    p.push(policy);
-    localStorage.setItem('sp_client_data', JSON.stringify(p));
-
-    const pay = JSON.parse(localStorage.getItem('sp_payment_data') || '[]');
-    pay.push(payment);
+    });
     localStorage.setItem('sp_payment_data', JSON.stringify(pay));
     
-    // NEW: Trigger MID Parallel Flow
     queueMIDSubmission(policyId, formData.vrm);
-
-    // NEW: Trigger Policy PDF Generation (Isolated logic)
     generatePolicyPDF(policyId);
 
     await new Promise(r => setTimeout(r, 800));
@@ -191,18 +219,28 @@ const QuotePage: React.FC = () => {
     <div className="min-h-screen bg-[#faf8fa] py-20">
       <div className="max-w-4xl mx-auto px-4">
         {step < 9 && (
-          <div className="bg-white rounded-[64px] p-16 border border-gray-100 shadow-2xl relative overflow-hidden">
-             <div className="flex items-center gap-6 mb-12">
-                <div className="w-16 h-16 bg-[#e91e8c]/10 text-[#e91e8c] rounded-2xl flex items-center justify-center">
-                   <ShieldCheck size={32} />
+          <div className="bg-white rounded-[64px] p-16 border border-gray-100 shadow-2xl relative overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-700">
+             <div className="flex items-center justify-between mb-12">
+                <div className="flex items-center gap-6">
+                  <div className="w-16 h-16 bg-[#e91e8c]/10 text-[#e91e8c] rounded-2xl flex items-center justify-center">
+                    <ShieldCheck size={32} />
+                  </div>
+                  <div>
+                    <h1 className="text-4xl font-bold font-outfit text-[#2d1f2d]">Quote Intake</h1>
+                    <p className="text-gray-400 text-sm font-medium">Verified asset risk assessment via DVLA sync.</p>
+                  </div>
                 </div>
-                <h1 className="text-4xl font-bold font-outfit text-[#2d1f2d]">Quote Intake</h1>
+                <div className="text-right">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-300">Step</p>
+                  <p className="text-2xl font-black text-[#e91e8c]">01</p>
+                </div>
              </div>
+             
              <div className="space-y-12">
                 <div className="space-y-6">
                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Cover Category *</label>
                    <div className="relative">
-                      <select required value={formData.insurance_type} onChange={e => setFormData({...formData, insurance_type: e.target.value as EnforcedInsuranceType})} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-8 py-5 text-lg font-bold outline-none appearance-none pr-12">
+                      <select required value={formData.insurance_type} onChange={e => setFormData({...formData, insurance_type: e.target.value as EnforcedInsuranceType})} className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-8 py-5 text-lg font-bold outline-none appearance-none pr-12 focus:border-[#e91e8c] transition-all">
                          <option value="">Select Insurance Type...</option>
                          <option value="Comprehensive Cover">Comprehensive Cover</option>
                          <option value="Third Party Insurance">Third Party Insurance</option>
@@ -211,21 +249,93 @@ const QuotePage: React.FC = () => {
                       <ChevronDown className="absolute right-6 top-1/2 -translate-y-1/2 text-gray-300 pointer-events-none" size={24} />
                    </div>
                 </div>
+
                 <div className="space-y-6">
-                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Asset Registration (VRM) *</label>
+                   <div className="flex justify-between items-center px-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">UK Registration Number *</label>
+                      <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1 ${lookupSuccess ? 'text-green-500' : 'text-[#e91e8c]'}`}>
+                        <Database size={10}/> {lookupSuccess ? 'Asset Locked' : 'Live DVLA Sync Active'}
+                      </span>
+                   </div>
                    <div className="flex gap-4">
-                      <input className="flex-1 bg-gray-50 border border-gray-100 rounded-2xl px-8 py-5 font-mono text-2xl uppercase tracking-widest outline-none" placeholder="AB12 CDE" value={formData.vrm} onChange={e => setFormData({...formData, vrm: e.target.value.toUpperCase()})} />
-                      <button onClick={handleLookup} disabled={isLookingUp || !formData.vrm} className="px-10 bg-[#2d1f2d] text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-black transition-all">
+                      <input 
+                        className={`flex-1 bg-gray-50 border rounded-2xl px-8 py-5 font-mono text-2xl uppercase tracking-widest outline-none transition-all ${
+                          lookupError ? 'border-red-200 bg-red-50' : 'border-gray-100 focus:border-[#e91e8c]'
+                        }`} 
+                        placeholder="VRM REQUIRED" 
+                        value={formData.vrm} 
+                        onChange={e => {
+                          setFormData({...formData, vrm: e.target.value.toUpperCase()});
+                          setLookupError(null);
+                          setLookupSuccess(false);
+                          setGroundingSources([]);
+                        }} 
+                      />
+                      <button onClick={handleLookup} disabled={isLookingUp || !formData.vrm} className="px-10 bg-[#2d1f2d] text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-black transition-all shadow-lg disabled:opacity-20 flex items-center justify-center">
                          {isLookingUp ? <Loader2 className="animate-spin" /> : <Search size={20}/>}
                       </button>
                    </div>
-                   {lookupSuccess && <p className="text-green-500 font-bold text-sm px-1 flex items-center gap-2"><ShieldCheck size={14}/> Asset ID: {formData.make} {formData.model}</p>}
+                   {lookupError && (
+                     <div className="flex items-center gap-2 p-4 bg-red-50 text-red-600 rounded-xl text-xs font-bold animate-in shake duration-300">
+                        <AlertOctagon size={16}/> {lookupError}
+                     </div>
+                   )}
+                   {lookupSuccess && (
+                     <div className="animate-in zoom-in-95 duration-300 space-y-4">
+                        <div className="p-8 bg-green-50 rounded-[32px] border border-green-100 shadow-xl shadow-green-900/5">
+                            <div className="flex justify-between items-start mb-6">
+                                <div>
+                                    <p className="text-[10px] font-black uppercase text-green-600 tracking-widest mb-1">National Asset Verified</p>
+                                    <p className="text-3xl font-black font-outfit text-[#2d1f2d]">{formData.make} {formData.model}</p>
+                                </div>
+                                <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-green-500 shadow-sm">
+                                    <CheckCircle size={24} />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {[
+                                    { l: 'Year', v: formData.year },
+                                    { l: 'Engine', v: formData.engineSize ? `${formData.engineSize}cc` : 'N/A' },
+                                    { l: 'Fuel', v: formData.fuelType },
+                                    { l: 'Gearbox', v: formData.transmission }
+                                ].map((item, i) => (
+                                    <div key={i} className="p-3 bg-white/50 rounded-xl border border-white">
+                                        <p className="text-[9px] font-black uppercase text-gray-400 tracking-widest">{item.l}</p>
+                                        <p className="text-sm font-bold text-[#2d1f2d]">{item.v || '—'}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {groundingSources.length > 0 && (
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                             <p className="text-[9px] font-black uppercase text-gray-400 tracking-widest mb-3 flex items-center gap-2">
+                                <Globe size={10} /> Data Sources Cited
+                             </p>
+                             <div className="flex flex-wrap gap-2">
+                                {groundingSources.map((source, i) => (
+                                  <a key={i} href={source.uri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-[9px] font-bold text-gray-500 hover:text-[#e91e8c] transition-all">
+                                     {source.title.slice(0, 30)}... <ExternalLink size={8} />
+                                  </a>
+                                ))}
+                             </div>
+                          </div>
+                        )}
+                     </div>
+                   )}
                 </div>
+
                 <div className="grid grid-cols-2 gap-6">
-                   <input className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold" placeholder="First Name" value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} />
-                   <input className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold" placeholder="Last Name" value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} />
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Identity: First Name *</label>
+                      <input className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold outline-none focus:border-[#e91e8c]" placeholder="Legal First Name" value={formData.firstName} onChange={e => setFormData({...formData, firstName: e.target.value})} />
+                   </div>
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Identity: Last Name *</label>
+                      <input className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold outline-none focus:border-[#e91e8c]" placeholder="Legal Last Name" value={formData.lastName} onChange={e => setFormData({...formData, lastName: e.target.value})} />
+                   </div>
                 </div>
-                <button onClick={calculateEnforcedQuote} disabled={!formData.insurance_type || !formData.vrm} className="w-full py-6 bg-[#e91e8c] text-white rounded-[32px] font-black uppercase tracking-widest shadow-2xl hover:bg-[#c4167a] transition-all disabled:opacity-30">Generate Binding Quote</button>
+                <button onClick={calculateEnforcedQuote} disabled={!formData.insurance_type || !formData.vrm || !lookupSuccess} className="w-full py-6 bg-[#e91e8c] text-white rounded-[32px] font-black uppercase tracking-widest shadow-2xl hover:bg-[#c4167a] transition-all disabled:opacity-30 disabled:grayscale">Calculate Binding Premium</button>
              </div>
           </div>
         )}
@@ -238,20 +348,21 @@ const QuotePage: React.FC = () => {
                       <div className="text-xl font-bold font-outfit text-white/50 uppercase tracking-widest">Cover: {formData.insurance_type}</div>
                       <div className="text-9xl font-black font-outfit tracking-tighter">£{finalQuote?.toLocaleString()}</div>
                    </div>
-                   <div className="inline-block mt-12 px-8 py-3 rounded-full border border-white/10 bg-white/5 text-xs font-black uppercase tracking-widest">Statement Locked • No Estimates Allowed</div>
+                   <div className="inline-block mt-12 px-8 py-3 rounded-full border border-white/10 bg-white/5 text-xs font-black uppercase tracking-widest">Registry Locked • Fixed for 30 Days</div>
                 </div>
                 <ShieldCheck className="absolute -bottom-20 -right-20 w-80 h-80 opacity-5" />
              </div>
              <div className="flex flex-col gap-4">
                 <button onClick={handlePurchase} className="w-full py-8 bg-[#e91e8c] text-white rounded-[40px] font-black uppercase text-xl shadow-2xl hover:bg-[#c4167a] transition-all flex items-center justify-center gap-4">Execute Purchase <ArrowRight size={28}/></button>
-                <button onClick={() => window.location.reload()} className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 hover:text-[#e91e8c] transition-colors">Restart Form to Recalculate</button>
+                <button onClick={() => window.location.reload()} className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 hover:text-[#e91e8c] transition-colors">Abort and Recalculate</button>
              </div>
           </div>
         )}
         {isProcessing && (
-          <div className="text-center py-40 bg-white rounded-[64px] shadow-2xl border border-gray-100">
+          <div className="text-center py-40 bg-white rounded-[64px] shadow-2xl border border-gray-100 animate-in fade-in duration-300">
              <div className="w-24 h-24 border-8 border-gray-100 border-t-[#e91e8c] rounded-full animate-spin mx-auto mb-10" />
-             <h2 className="text-4xl font-bold text-[#2d1f2d] font-outfit">Processing Order</h2>
+             <h2 className="text-4xl font-bold text-[#2d1f2d] font-outfit">Synchronizing Assets</h2>
+             <p className="text-gray-400 font-medium mt-4">Transmitting data to underwriters and MIB registry...</p>
           </div>
         )}
       </div>

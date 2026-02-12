@@ -34,7 +34,7 @@ const Footer: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
         {/* Regulatory Trust Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-20 p-8 bg-white/5 rounded-[40px] border border-white/10 items-center">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-20 p-8 bg-white/5 rounded-[40px] border border-white/10 items-center">
           <div className="flex items-center gap-4">
              <div className="bg-[#e91e8c]/20 p-3 rounded-2xl">
                <Award className="text-[#e91e8c] h-8 w-8" />
@@ -61,16 +61,6 @@ const Footer: React.FC = () => {
                <h4 className="font-bold text-sm">FSCS Protected</h4>
                <p className="text-[10px] text-white/40 uppercase tracking-widest">Customer Security</p>
              </div>
-          </div>
-          <div className="lg:text-right">
-             <a 
-               href="https://register.fca.org.uk/" 
-               target="_blank" 
-               rel="noreferrer"
-               className="inline-block px-6 py-3 bg-[#e91e8c] hover:bg-[#c4167a] text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
-             >
-               Verify Status
-             </a>
           </div>
         </div>
 
